@@ -308,13 +308,12 @@ step_install_base() {
   echo "  - base-devel, sudo, neovim, nano"
   echo "  - networkmanager, wpa_supplicant"
   echo "  - grub, efibootmgr, os-prober, ntfs-3g"
-  echo "  - neofetch, htop"
   echo
   confirm "¿Continuar con la instalación?" || error "Cancelado"
 
   info "Instalando sistema base (esto puede tardar varios minutos)..."
   pacstrap -K /mnt base linux linux-firmware base-devel sudo neovim nano \
-    networkmanager wpa_supplicant grub efibootmgr os-prober ntfs-3g neofetch htop
+    networkmanager wpa_supplicant grub efibootmgr os-prober ntfs-3g 
   success "Sistema base instalado"
 
   info "Generando /etc/fstab..."

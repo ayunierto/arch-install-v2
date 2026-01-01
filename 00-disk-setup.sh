@@ -44,6 +44,35 @@ check_commands() {
   done
 }
 
+# selección guiada de disco para cfdisk
+choose_disk_for_cfdisk() {
+  mapfile -t disks < <(lsblk -dpno NAME,SIZE,MODEL || true)
+  if (( ${#disks[@]} == 0 )); then
+    echo "No se detectaron discos."
+    pause
+    return 1
+  fi
+
+  echo "Selecciona un disco para abrir cfdisk:"
+  for i in "${!disks[@]}"; do
+    printf "  [%d] %s\n" "$((i + 1))" "${disks[$i]}"
+  done
+  echo "  [q] Volver"
+  echo
+  read -rp "Opción: " choice
+
+  [[ "$choice" == "q" ]] && return 1
+  if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#disks[@]} )); then
+    local disk_entry="${disks[$((choice - 1))]}"
+    local disk_path="${disk_entry%% *}"
+    cfdisk "$disk_path"
+  else
+    echo "Selección inválida."
+    pause
+    return 1
+  fi
+}
+
 # desmonta/stop swap de /mnt si algo falla
 cleanup() {
   set +e
@@ -80,9 +109,7 @@ while true; do
   read -rp "Selecciona una opción: " opt
   case "$opt" in
     1)
-      read -rp "Disco para cfdisk (ej: /dev/nvme0n1 o /dev/sda): " disk
-      [[ -b "$disk" ]] || { echo "Disco no válido"; pause; continue; }
-      cfdisk "$disk"
+      choose_disk_for_cfdisk || true
       ;;
     2) break ;;
     q) exit 0 ;;
@@ -94,32 +121,56 @@ done
 select_partition() {
   local label="$1"
   local varname="$2"
+  local required="${3:-0}"
   while true; do
     header
-    lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
+    echo "Particiones detectadas (solo TYPE=part):"
+    mapfile -t parts < <(lsblk -rpno NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT | awk '$2=="part" {print $1" "$3" "$4" "$5}')
+    if (( ${#parts[@]} == 0 )); then
+      echo "No se detectaron particiones."
+      pause
+      return 1
+    fi
+
+    for i in "${!parts[@]}"; do
+      printf "  [%d] %s\n" "$((i + 1))" "${parts[$i]}"
+    done
+    if [[ "$required" -eq 0 ]]; then
+      echo "  [0] Omitir $label"
+    fi
+    echo "  [q] Volver"
     echo
-    read -rp "Ingresa la partición para $label (ej: /dev/nvme0n1p2) o vacío para omitir: " part
-    [[ -z "$part" ]] && { printf "%s: omitido\n" "$label"; return; }
-    if [[ -b "$part" ]]; then
+    read -rp "Selecciona $label: " choice
+
+    [[ "$choice" == "q" ]] && return 1
+    if [[ "$choice" == "0" && "$required" -eq 0 ]]; then
+      printf "%s: omitido\n" "$label"
+      printf -v "$varname" '%s' ""
+      return 0
+    fi
+
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#parts[@]} )); then
+      local entry="${parts[$((choice - 1))]}"
+      local part_path="${entry%% *}"
       echo
-      echo "Información de $part:"
-      blkid "$part" || true
-      echo "¿Confirmar $label = $part ?"
-      if confirm "Confirmas $label = $part ?"; then
-        printf -v "$varname" '%s' "$part"
-        return
+      echo "Información de $part_path:"
+      blkid "$part_path" || true
+      echo "¿Confirmar $label = $part_path ?"
+      if confirm "Confirmas $label = $part_path ?"; then
+        printf -v "$varname" '%s' "$part_path"
+        return 0
       fi
     else
-      echo "Partición no válida: $part"
+      echo "Selección inválida."
       pause
     fi
   done
 }
 
-select_partition "EFI (FAT32)" EFI_PART
-select_partition "ROOT (/)" ROOT_PART
-select_partition "HOME (/home)" HOME_PART
-select_partition "SWAP" SWAP_PART
+select_partition "EFI (FAT32)" EFI_PART 0
+select_partition "ROOT (/)" ROOT_PART 1
+select_partition "HOME (/home)" HOME_PART 0
+select_partition "SWAP" SWAP_PART 0
 
 [[ -n "$ROOT_PART" ]] || error "ROOT es obligatorio. Reinicia y selecciona una partición raíz."
 

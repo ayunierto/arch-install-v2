@@ -82,15 +82,6 @@ check_commands() {
   [[ $missing -eq 0 ]] || error "Instala los comandos faltantes en el live-ISO"
 }
 
-check_internet() {
-  info "Verificando conexión a Internet..."
-  if ping -c 2 archlinux.org &>/dev/null; then
-    success "Conexión a Internet OK"
-  else
-    error "No hay conexión a Internet. Configura la red antes de continuar"
-  fi
-}
-
 ### LIMPIEZA EN CASO DE ERROR ###
 cleanup() {
   set +e
@@ -612,7 +603,6 @@ main() {
   check_root
   check_uefi
   check_commands
-  check_internet
   
   pause
 

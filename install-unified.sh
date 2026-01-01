@@ -303,15 +303,13 @@ step_install_base() {
   header
   section "PASO 2: Instalar sistema base"
   
-  info "Se instalarán los siguientes paquetes:"
+  info "Instalando paquetes base (esto puede tardar varios minutos)..."
   echo "  - base, linux, linux-firmware"
   echo "  - base-devel, sudo, neovim, nano"
   echo "  - networkmanager, wpa_supplicant"
   echo "  - grub, efibootmgr, os-prober, ntfs-3g"
   echo
-  confirm "¿Continuar con la instalación?" || error "Cancelado"
 
-  info "Instalando sistema base (esto puede tardar varios minutos)..."
   pacstrap -K /mnt base linux linux-firmware base-devel sudo neovim nano \
     networkmanager wpa_supplicant grub efibootmgr os-prober ntfs-3g 
   success "Sistema base instalado"
@@ -458,9 +456,7 @@ step_install_desktop() {
 
   echo "¿Deseas instalar un entorno de escritorio?"
   echo "  [1] Hyprland + greetd (Wayland, moderno y fluido)"
-  echo "  [2] KDE Plasma"
-  echo "  [3] GNOME"
-  echo "  [4] XFCE"
+  echo "  [2] GNOME (Wayland + X11, completo)"
   echo "  [0] No instalar (solo terminal)"
   read -rp "→ Opción [0]: " de_opt
 
@@ -492,27 +488,123 @@ EOF"
       arch-chroot /mnt /bin/bash -c "systemctl enable greetd"
       success "greetd configurado con tuigreet"
       
+      info "Creando configuración inicial de Hyprland..."
+      arch-chroot /mnt /bin/bash -c "mkdir -p /home/$USERNAME/.config/hypr"
+      arch-chroot /mnt /bin/bash -c "cp /usr/share/hyprland/hyprland.conf /home/$USERNAME/.config/hypr/hyprland.conf || cat > /home/$USERNAME/.config/hypr/hyprland.conf <<'EOFHYPR'
+# Configuración inicial de Hyprland
+# Docs: https://wiki.hyprland.org/
+
+# Monitores
+monitor=,preferred,auto,1
+
+# Programas al inicio
+exec-once = waybar
+exec-once = /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
+
+# Variables de entorno
+env = XCURSOR_SIZE,24
+env = QT_QPA_PLATFORMTHEME,qt5ct
+
+# Input
+input {
+    kb_layout = us
+    follow_mouse = 1
+    touchpad {
+        natural_scroll = false
+    }
+    sensitivity = 0
+}
+
+# General
+general {
+    gaps_in = 5
+    gaps_out = 10
+    border_size = 2
+    col.active_border = rgba(33ccffee) rgba(00ff99ee) 45deg
+    col.inactive_border = rgba(595959aa)
+    layout = dwindle
+}
+
+# Decoraciones
+decoration {
+    rounding = 10
+    blur {
+        enabled = true
+        size = 3
+        passes = 1
+    }
+    drop_shadow = yes
+    shadow_range = 4
+    shadow_render_power = 3
+    col.shadow = rgba(1a1a1aee)
+}
+
+# Animaciones
+animations {
+    enabled = yes
+    bezier = myBezier, 0.05, 0.9, 0.1, 1.05
+    animation = windows, 1, 7, myBezier
+    animation = windowsOut, 1, 7, default, popin 80%
+    animation = border, 1, 10, default
+    animation = borderangle, 1, 8, default
+    animation = fade, 1, 7, default
+    animation = workspaces, 1, 6, default
+}
+
+# Layouts
+dwindle {
+    pseudotile = yes
+    preserve_split = yes
+}
+
+# Keybinds
+\$mainMod = SUPER
+
+bind = \$mainMod, RETURN, exec, kitty
+bind = \$mainMod, Q, killactive,
+bind = \$mainMod, M, exit,
+bind = \$mainMod, E, exec, nautilus
+bind = \$mainMod, V, togglefloating,
+bind = \$mainMod, D, exec, wofi --show drun
+bind = \$mainMod, P, pseudo,
+bind = \$mainMod, J, togglesplit,
+
+# Mover focus
+bind = \$mainMod, left, movefocus, l
+bind = \$mainMod, right, movefocus, r
+bind = \$mainMod, up, movefocus, u
+bind = \$mainMod, down, movefocus, d
+
+# Workspaces
+bind = \$mainMod, 1, workspace, 1
+bind = \$mainMod, 2, workspace, 2
+bind = \$mainMod, 3, workspace, 3
+bind = \$mainMod, 4, workspace, 4
+bind = \$mainMod, 5, workspace, 5
+
+# Mover ventanas a workspace
+bind = \$mainMod SHIFT, 1, movetoworkspace, 1
+bind = \$mainMod SHIFT, 2, movetoworkspace, 2
+bind = \$mainMod SHIFT, 3, movetoworkspace, 3
+bind = \$mainMod SHIFT, 4, movetoworkspace, 4
+bind = \$mainMod SHIFT, 5, movetoworkspace, 5
+
+# Mouse
+bindm = \$mainMod, mouse:272, movewindow
+bindm = \$mainMod, mouse:273, resizewindow
+EOFHYPR"
+      arch-chroot /mnt /bin/bash -c "chown -R $USERNAME:$USERNAME /home/$USERNAME/.config"
+      success "Configuración de Hyprland creada"
+      
       info "Instalando herramientas adicionales para Hyprland..."
       arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm grim slurp wl-clipboard brightnessctl playerctl"
       success "Herramientas de Hyprland instaladas"
       ;;
     2)
-      info "Instalando KDE Plasma..."
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm xorg plasma-meta sddm"
-      arch-chroot /mnt /bin/bash -c "systemctl enable sddm"
-      success "KDE Plasma instalado"
-      ;;
-    3)
       info "Instalando GNOME..."
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm xorg gnome gdm"
+      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm gnome gdm"
       arch-chroot /mnt /bin/bash -c "systemctl enable gdm"
       success "GNOME instalado"
-      ;;
-    4)
-      info "Instalando XFCE..."
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm xorg xfce4 xfce4-goodies lightdm lightdm-gtk-greeter"
-      arch-chroot /mnt /bin/bash -c "systemctl enable lightdm"
-      success "XFCE instalado"
       ;;
     *)
       info "Sin entorno de escritorio. Solo terminal."

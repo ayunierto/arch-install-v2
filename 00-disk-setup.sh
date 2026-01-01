@@ -101,10 +101,13 @@ while true; do
   echo
   lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
   echo
-  echo "Opciones:"
-  echo "  [1] Abrir cfdisk"
-  echo "  [2] Continuar a selección de particiones"
-  echo "  [q] Salir"
+  echo "+---------------------------------------+"
+  echo "| Opciones                              |"
+  echo "+---------------------------------------+"
+  echo "|  [1] Abrir cfdisk                     |"
+  echo "|  [2] Continuar a selección de part.   |"
+  echo "|  [q] Salir                            |"
+  echo "+---------------------------------------+"
   echo
   read -rp "Selecciona una opción: " opt
   case "$opt" in
@@ -132,8 +135,15 @@ select_partition() {
       return 1
     fi
 
+    printf "  %-4s %-28s %-12s %-12s %-10s\n" "Idx" "DISPOSITIVO" "TAM" "FSTYPE" "MOUNT"
+    printf "  %-4s %-28s %-12s %-12s %-10s\n" "----" "----------------------------" "--------" "----------" "----------"
     for i in "${!parts[@]}"; do
-      printf "  [%d] %s\n" "$((i + 1))" "${parts[$i]}"
+      entry="${parts[$i]}"
+      p_path="${entry%% *}"
+      rest="${entry#* }"
+      p_size="${rest%% *}"; rest="${rest#* }"
+      p_fs="${rest%% *}"; p_mnt="${rest#* }"
+      printf "  [%2d] %-28s %-12s %-12s %-10s\n" "$((i + 1))" "$p_path" "$p_size" "${p_fs:--}" "${p_mnt:--}"
     done
     if [[ "$required" -eq 0 ]]; then
       echo "  [0] Omitir $label"

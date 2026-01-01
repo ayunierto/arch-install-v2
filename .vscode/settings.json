@@ -1,0 +1,24 @@
+{
+  "cSpell.words": [
+    "archlinux",
+    "blkid",
+    "cfdisk",
+    "dpno",
+    "efibootmgr",
+    "genfstab",
+    "greetd",
+    "hwclock",
+    "linux",
+    "localdomain",
+    "localtime",
+    "mkconfig",
+    "mountpoint",
+    "networkmanager",
+    "ntfs",
+    "pacstrap",
+    "swapoff",
+    "systohc",
+    "varname",
+    "zoneinfo"
+  ]
+}

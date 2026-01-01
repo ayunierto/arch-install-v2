@@ -17,7 +17,7 @@ SWAP_PART=""
 HOSTNAME=""
 USERNAME=""
 TIMEZONE="America/Lima"
-LOCALE="es_PE.UTF-8"
+LOCALE="en_US.UTF-8"
 
 ### UTILIDADES ###
 pause() { 
@@ -305,15 +305,16 @@ step_install_base() {
   
   info "Se instalarán los siguientes paquetes:"
   echo "  - base, linux, linux-firmware"
-  echo "  - base-devel, sudo, vim, nano"
+  echo "  - base-devel, sudo, neovim, nano"
   echo "  - networkmanager, wpa_supplicant"
   echo "  - grub, efibootmgr, os-prober, ntfs-3g"
+  echo "  - neofetch, htop"
   echo
   confirm "¿Continuar con la instalación?" || error "Cancelado"
 
   info "Instalando sistema base (esto puede tardar varios minutos)..."
-  pacstrap -K /mnt base linux linux-firmware base-devel sudo vim nano \
-    networkmanager wpa_supplicant grub efibootmgr os-prober ntfs-3g
+  pacstrap -K /mnt base linux linux-firmware base-devel sudo neovim nano \
+    networkmanager wpa_supplicant grub efibootmgr os-prober ntfs-3g neofetch htop
   success "Sistema base instalado"
 
   info "Generando /etc/fstab..."
@@ -524,7 +525,7 @@ EOF"
     echo
     if [[ "${de_opt}" == "1" ]]; then
       info "Instalando PipeWire (recomendado para Wayland/Hyprland)..."
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber pavucontrol"
+      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm pipewire pipewire-pulse pipewire-alsa wireplumber pavucontrol"
       success "PipeWire instalado"
     else
       if confirm "¿Instalar soporte de audio (PulseAudio)?"; then
@@ -603,6 +604,10 @@ main() {
   check_root
   check_uefi
   check_commands
+  
+  info "Sincronizando reloj del sistema..."
+  timedatectl set-ntp true
+  success "Reloj sincronizado"
   
   pause
 

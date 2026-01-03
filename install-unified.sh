@@ -287,542 +287,91 @@ step_prepare_disks() {
     fi
   fi
 
-  info "Formateando ROOT ($ROOT_PART) como ext4..."
-  mkfs.ext4 -F "$ROOT_PART"
-  success "ROOT formateado"
-
-  if [[ -n "$HOME_PART" ]]; then
-    info "Formateando HOME ($HOME_PART) como ext4..."
-    mkfs.ext4 -F "$HOME_PART"
-    success "HOME formateado"
   fi
+  #!/usr/bin/env bash
+  set -euo pipefail
+  IFS=$'\n\t'
 
-  if [[ -n "$SWAP_PART" ]]; then
-    info "Creando SWAP en $SWAP_PART..."
-    mkswap "$SWAP_PART"
-    success "SWAP creado"
-  fi
+  # ============================================================================
+  # Instalación completa de Arch Linux (UEFI) - Orquestador modular
+  # Ejecutar como root en el live-ISO de Arch Linux
+  # ============================================================================
 
-  # 1.11 Montar
-  section "Montando particiones en /mnt"
-  mount "$ROOT_PART" /mnt
-  success "ROOT montado en /mnt"
+  # Configurar fuente de consola para mejor legibilidad
+  setfont ter-132b
 
-  mount --mkdir "$EFI_PART" /mnt/boot
-  success "EFI montado en /mnt/boot"
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+  ### VARIABLES GLOBALES ###
+  ROOT_PART=""
+  EFI_PART=""
+  HOME_PART=""
+  SWAP_PART=""
+  HOSTNAME=""
+  USERNAME=""
+  TIMEZONE="America/Lima"
+  LOCALE="en_US.UTF-8"
+
+  ### CARGA DE MÓDULOS ###
+  source "${SCRIPT_DIR}/modules/ui.sh"
+  source "${SCRIPT_DIR}/modules/validation.sh"
+  source "${SCRIPT_DIR}/modules/steps/01_disks.sh"
+  source "${SCRIPT_DIR}/modules/plan.sh"
+  source "${SCRIPT_DIR}/modules/steps/02_base.sh"
+  source "${SCRIPT_DIR}/modules/steps/03_config.sh"
+  source "${SCRIPT_DIR}/modules/steps/04_users.sh"
+  source "${SCRIPT_DIR}/modules/steps/05_boot.sh"
+  source "${SCRIPT_DIR}/modules/steps/06_network.sh"
+  source "${SCRIPT_DIR}/modules/steps/07_amd.sh"
+  source "${SCRIPT_DIR}/modules/steps/08_desktop.sh"
+  source "${SCRIPT_DIR}/modules/steps/09_verify.sh"
+  source "${SCRIPT_DIR}/modules/steps/10_finalize.sh"
+
+  ### LIMPIEZA EN CASO DE ERROR ###
+  cleanup() {
+    set +e
+    if mountpoint -q /mnt 2>/dev/null; then
+      info "Desmontando /mnt..."
+      umount -R /mnt 2>/dev/null || true
+    fi
+    if [[ -n "${SWAP_PART:-}" ]]; then
+      swapoff "$SWAP_PART" 2>/dev/null || true
+    fi
+  }
+  trap cleanup EXIT
+
+  ### MAIN ###
+  main() {
+    setup_colors
+    header "Instalador Arch Linux (UEFI)"
+    info "Iniciando instalador de Arch Linux..."
+    echo
   
-  # Verificar que el montaje fue exitoso
-  if ! mountpoint -q /mnt/boot; then
-    error "CRÍTICO: /mnt/boot no está montado correctamente"
-  fi
+    check_root
+    check_uefi
+    check_commands
   
-  # Verificar que la partición EFI es accesible
-  if ! touch /mnt/boot/.test 2>/dev/null; then
-    error "CRÍTICO: No se puede escribir en /mnt/boot (permisos o sistema de archivos corrupto)"
-  fi
-  rm -f /mnt/boot/.test
-
-  if [[ -n "$HOME_PART" ]]; then
-    mount --mkdir "$HOME_PART" /mnt/home
-    success "HOME montado en /mnt/home"
-  fi
-
-  if [[ -n "$SWAP_PART" ]]; then
-    swapon "$SWAP_PART"
-    success "SWAP activado"
-  fi
-
-  echo
-  lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT
-  pause
-}
-
-### PASO 2: INSTALAR SISTEMA BASE ###
-step_install_base() {
-  header
-  section "PASO 2: Instalar sistema base"
+    info "Sincronizando reloj del sistema..."
+    timedatectl
+    success "Reloj sincronizado"
   
-  info "Instalando paquetes base (esto puede tardar varios minutos)..."
-  echo "  - base, linux, linux-firmware"
-  echo "  - base-devel, sudo, neovim"
-  echo "  - networkmanager, wpa_supplicant"
-  echo "  - grub, efibootmgr, os-prober, ntfs-3g"
-  echo
+    pause
 
-  pacstrap -K /mnt base linux linux-firmware base-devel sudo neovim \
-    networkmanager wpa_supplicant grub efibootmgr os-prober ntfs-3g 
-  success "Sistema base instalado"
+    # Recopilar todas las decisiones primero
+    collect_plan
 
-  info "Generando /etc/fstab..."
-  genfstab -U /mnt >> /mnt/etc/fstab
-  success "fstab generado"
-  echo
-  
-  # Verificar que /boot esté en fstab
-  if ! grep -q "/boot" /mnt/etc/fstab; then
-    error "CRÍTICO: /boot no está en /etc/fstab. La instalación falló."
-  fi
-  
-  # Mostrar fstab generado
-  info "Contenido de /etc/fstab:"
-  echo
-  cat /mnt/etc/fstab
-  echo
-  
+    # Ejecutar instalación completa
+    step_prepare_disks
+    step_install_base
+    step_configure_system
+    step_create_users
+    step_install_bootloader
+    step_configure_network
+    step_install_amd_drivers
+    step_install_desktop
+    step_verify_installation
+    step_finalize
+  }
+
+  main "$@"
   # Advertencia importante
-  echo "⚠ IMPORTANTE: Verifica que la línea de /boot tenga el UUID correcto"
-  echo "             Si hay algún problema, edita /mnt/etc/fstab antes de continuar"
-  echo
-  pause
-}
-
-### PASO 3: CONFIGURAR SISTEMA ###
-step_configure_system() {
-  header
-  section "PASO 3: Configurar sistema básico"
-
-  # Zona horaria
-  echo "Zonas horarias sugeridas:"
-  echo "  [1] America/Lima"
-  echo "  [2] America/Mexico_City"
-  echo "  [3] America/Bogota"
-  echo "  [4] Europe/Madrid"
-  echo "  [5] Personalizar"
-  read -rp "→ Elige zona horaria [1]: " tz_opt
-  case "${tz_opt:-1}" in
-    1|"") TIMEZONE="America/Lima" ;;
-    2) TIMEZONE="America/Mexico_City" ;;
-    3) TIMEZONE="America/Bogota" ;;
-    4) TIMEZONE="Europe/Madrid" ;;
-    5) read -rp "Introduce zona horaria (ej: America/Santiago): " TIMEZONE ;;
-  esac
-
-  info "Configurando zona horaria: $TIMEZONE"
-  arch-chroot /mnt /bin/bash -c "ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime"
-  arch-chroot /mnt /bin/bash -c "hwclock --systohc"
-  success "Zona horaria configurada"
-
-  # Localización (locale)
-  echo
-  echo "Locales sugeridos:"
-  echo "  [1] en_US.UTF-8"
-  echo "  [2] es_PE.UTF-8"
-  echo "  [3] es_ES.UTF-8"
-  echo "  [4] es_MX.UTF-8"
-  echo "  [5] Personalizar"
-  read -rp "→ Elige locale [1]: " locale_opt
-  case "${locale_opt:-1}" in
-    1|"") LOCALE="en_US.UTF-8" ;;
-    2) LOCALE="es_PE.UTF-8" ;;
-    3) LOCALE="es_ES.UTF-8" ;;
-    4) LOCALE="es_MX.UTF-8" ;;
-    5) read -rp "Introduce locale (ej: es_AR.UTF-8): " LOCALE ;;
-  esac
-
-  info "Configurando locale: $LOCALE"
-  arch-chroot /mnt /bin/bash -c "echo '$LOCALE UTF-8' > /etc/locale.gen"
-  arch-chroot /mnt /bin/bash -c "locale-gen"
-  arch-chroot /mnt /bin/bash -c "echo 'LANG=$LOCALE' > /etc/locale.conf"
-  success "Locale configurado"
-
-  # Network configuration
-  # Hostname
-  echo
-  read -rp "→ Nombre para la PC (hostname) [arch]: " HOSTNAME
-  HOSTNAME="${HOSTNAME:-arch}"
-  info "Configurando hostname: $HOSTNAME"
-  arch-chroot /mnt /bin/bash -c "echo '$HOSTNAME' > /etc/hostname"
-
-  arch-chroot /mnt /bin/bash -c "cat > /etc/hosts <<EOF
-127.0.0.1   localhost
-::1         localhost
-127.0.0.1   $HOSTNAME.localdomain $HOSTNAME
-EOF"
-  success "Hostname configurado"
-  
-  pause
-}
-
-### PASO 4: USUARIOS Y CONTRASEÑAS ###
-step_create_users() {
-  header
-  section "PASO 4: Configurar usuarios"
-
-  info "Configura la contraseña para el usuario ROOT:"
-  arch-chroot /mnt /bin/bash -c "passwd"
-  success "Contraseña de root establecida"
-
-  echo
-  read -rp "→ Nombre de usuario a crear [usuario]: " USERNAME
-  USERNAME="${USERNAME:-usuario}"
-  
-  info "Creando usuario: $USERNAME"
-  arch-chroot /mnt /bin/bash -c "useradd -m -G wheel '$USERNAME'"
-  
-  echo
-  info "Configura la contraseña para $USERNAME:"
-  arch-chroot /mnt /bin/bash -c "passwd '$USERNAME'"
-  success "Usuario $USERNAME creado"
-
-  info "Habilitando sudo para el grupo wheel..."
-  arch-chroot /mnt /bin/bash -c "sed -i 's/^# *%wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers"
-  success "Sudo habilitado para wheel"
-  
-  pause
-}
-
-### PASO 5: BOOTLOADER ###
-step_install_bootloader() {
-  header
-  section "PASO 5: Instalar GRUB (bootloader)"
-
-  info "Habilitando os-prober para detectar otros sistemas operativos (dual boot)..."
-  arch-chroot /mnt /bin/bash -c "echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub"
-  success "os-prober habilitado"
-
-  info "Instalando GRUB en modo UEFI..."
-  if ! arch-chroot /mnt /bin/bash -c "grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Arch"; then
-    error "CRÍTICO: La instalación de GRUB falló. Verifica que /boot esté correctamente montado."
-  fi
-  success "GRUB instalado"
-  
-  # Verificar que los archivos de GRUB existan
-  if [[ ! -f /mnt/boot/grub/grubenv ]]; then
-    echo "✗ ADVERTENCIA: No se encontraron archivos de GRUB en /mnt/boot/grub/"
-    echo "  Esto puede indicar un problema con la partición EFI."
-    if ! confirm "¿Continuar de todas formas?"; then
-      error "Instalación cancelada. Verifica la partición EFI."
-    fi
-  fi
-
-  info "Detectando otros sistemas operativos..."
-  arch-chroot /mnt /bin/bash -c "os-prober" || true
-
-  info "Generando configuración de GRUB..."
-  arch-chroot /mnt /bin/bash -c "grub-mkconfig -o /boot/grub/grub.cfg"
-  success "Configuración de GRUB generada"
-  
-  # Verificar que grub.cfg se haya generado correctamente
-  if [[ ! -s /mnt/boot/grub/grub.cfg ]]; then
-    error "CRÍTICO: El archivo grub.cfg está vacío o no existe."
-  fi
-  
-  info "Verificando entradas de arranque..."
-  if grep -q "menuentry" /mnt/boot/grub/grub.cfg; then
-    success "Configuración de GRUB válida (entradas de menú encontradas)"
-  else
-    echo "✗ ADVERTENCIA: No se encontraron entradas de menú en grub.cfg"
-    pause
-  fi
-  
-  pause
-}
-
-### PASO 6: RED ###
-step_configure_network() {
-  header
-  section "PASO 6: Configurar red"
-
-  info "Habilitando NetworkManager..."
-  arch-chroot /mnt /bin/bash -c "systemctl enable NetworkManager"
-  success "NetworkManager habilitado (iniciará en el próximo boot)"
-  
-  pause
-}
-
-### PASO 7: DRIVERS AMD (OPCIONAL) ###
-step_install_amd_drivers() {
-  header
-  section "PASO 7: Drivers AMD (opcional)"
-
-  echo "¿Tu sistema tiene hardware AMD (CPU o GPU)?"
-  echo
-  echo "  [1] GPU AMD (instalar drivers de gráficos)"
-  echo "  [2] CPU AMD (instalar microcode)"
-  echo "  [3] Ambos (GPU + CPU AMD)"
-  echo "  [0] Omitir (no tengo hardware AMD)"
-  read -rp "→ Opción [0]: " amd_opt
-
-  case "${amd_opt:-0}" in
-    1)
-      info "Instalando drivers de GPU AMD (GPUs modernas: RX 400+, Vega, Navi, RDNA)..."
-      echo "  • mesa (OpenGL/EGL)"
-      echo "  • vulkan-radeon (Vulkan)"
-      echo "  • libva-mesa-driver (aceleración de video VA-API)"
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm mesa vulkan-radeon libva-mesa-driver"
-      success "Drivers de GPU AMD instalados"
-      
-      if confirm "¿Instalar soporte de 32-bit para juegos?"; then
-        info "Habilitando repositorio multilib..."
-        arch-chroot /mnt /bin/bash -c "sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf"
-        arch-chroot /mnt /bin/bash -c "pacman -Sy --noconfirm"
-        
-        info "Instalando drivers de 32-bit..."
-        arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm lib32-mesa lib32-vulkan-radeon"
-        success "Soporte de 32-bit instalado"
-      fi
-      ;;
-    2)
-      info "Instalando microcode para CPU AMD..."
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm amd-ucode"
-      success "Microcode AMD instalado"
-      
-      info "Regenerando configuración de GRUB..."
-      arch-chroot /mnt /bin/bash -c "grub-mkconfig -o /boot/grub/grub.cfg"
-      success "GRUB actualizado con microcode AMD"
-      ;;
-    3)
-      info "Instalando drivers de GPU AMD (GPUs modernas: RX 400+, Vega, Navi, RDNA)..."
-      echo "  • mesa (OpenGL/EGL)"
-      echo "  • vulkan-radeon (Vulkan)"
-      echo "  • libva-mesa-driver (aceleración de video VA-API)"
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm mesa vulkan-radeon libva-mesa-driver"
-      success "Drivers de GPU AMD instalados"
-      
-      if confirm "¿Instalar soporte de 32-bit para juegos?"; then
-        info "Habilitando repositorio multilib..."
-        arch-chroot /mnt /bin/bash -c "sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf"
-        arch-chroot /mnt /bin/bash -c "pacman -Sy --noconfirm"
-        
-        info "Instalando drivers de 32-bit..."
-        arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm lib32-mesa lib32-vulkan-radeon"
-        success "Soporte de 32-bit instalado"
-      fi
-      
-      echo
-      info "Instalando microcode para CPU AMD..."
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm amd-ucode"
-      success "Microcode AMD instalado"
-      
-      info "Regenerando configuración de GRUB..."
-      arch-chroot /mnt /bin/bash -c "grub-mkconfig -o /boot/grub/grub.cfg"
-      success "GRUB actualizado con microcode AMD"
-      ;;
-    *)
-      info "Omitiendo instalación de drivers AMD"
-      ;;
-  esac
-
-  pause
-}
-
-### PASO 8: ENTORNO DE ESCRITORIO (OPCIONAL) ###
-step_install_desktop() {
-  header
-  section "PASO 8: Entorno de escritorio (opcional)"
-
-  echo "¿Deseas instalar un entorno de escritorio?"
-  echo "  [1] Hyprland + greetd (Wayland, moderno y fluido)"
-  echo "  [2] GNOME (Wayland + X11, completo)"
-  echo "  [0] No instalar (solo terminal)"
-  read -rp "→ Opción [0]: " de_opt
-
-  case "${de_opt:-0}" in
-    1)
-      info "Instalando Hyprland + greetd + tuigreet..."
-      # Paquetes base de Hyprland y Wayland
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm hyprland kitty waybar wofi xdg-desktop-portal-hyprland polkit-gnome qt5-wayland qt6-wayland seatd"
-      success "Hyprland instalado"
-      
-      info "Habilitando seatd..."
-      arch-chroot /mnt /bin/bash -c "systemctl enable seatd"
-      arch-chroot /mnt /bin/bash -c "usermod -aG seat '$USERNAME'"
-      success "seatd habilitado"
-      
-      info "Configurando greetd como gestor de sesiones..."
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm greetd greetd-tuigreet"
-      
-      # Configurar greetd para usar tuigreet y lanzar Hyprland
-      arch-chroot /mnt /bin/bash -c "cat > /etc/greetd/config.toml <<'EOF'
-[terminal]
-vt = 1
-
-[default_session]
-command = \"tuigreet --time --remember --cmd Hyprland\"
-user = \"greeter\"
-EOF"
-      
-      arch-chroot /mnt /bin/bash -c "systemctl enable greetd"
-      success "greetd configurado con tuigreet (Hyprland generará su config al primer arranque)"
-      
-      info "Instalando herramientas adicionales para Hyprland..."
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm grim slurp wl-clipboard brightnessctl playerctl"
-      success "Herramientas de Hyprland instaladas"
-      ;;
-    2)
-      info "Instalando GNOME..."
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm gnome gdm"
-      arch-chroot /mnt /bin/bash -c "systemctl enable gdm"
-      success "GNOME instalado"
-      ;;
-    *)
-      info "Sin entorno de escritorio. Solo terminal."
-      ;;
-  esac
-
-  # Audio (PipeWire para Wayland, PulseAudio para X11)
-  if [[ "${de_opt:-0}" != "0" ]]; then
-    echo
-    if [[ "${de_opt}" == "1" ]]; then
-      info "Instalando PipeWire (recomendado para Wayland/Hyprland)..."
-      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm pipewire pipewire-pulse pipewire-alsa wireplumber pavucontrol"
-      success "PipeWire instalado"
-    else
-      if confirm "¿Instalar soporte de audio (PulseAudio)?"; then
-        info "Instalando audio..."
-        arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm alsa-utils pulseaudio pulseaudio-alsa pavucontrol"
-        success "Audio instalado"
-      fi
-    fi
-    arch-chroot /mnt /bin/bash -c "usermod -aG audio '$USERNAME'"
-  fi
-
-  # Paquetes útiles comunes
-  if [[ "${de_opt:-0}" != "0" ]]; then
-    echo
-    if confirm "¿Instalar paquetes adicionales? (firefox, nautilus/thunar, neofetch, htop, git)"; then
-      info "Instalando paquetes útiles..."
-      if [[ "${de_opt}" == "1" ]]; then
-        # Para Hyprland, instalar navegador y gestor de archivos compatible con Wayland
-        arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm firefox nautilus neofetch htop zip unzip tar p7zip wget git"
-      else
-        arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm firefox thunar neofetch htop zip unzip tar p7zip wget git"
-      fi
-      success "Paquetes adicionales instalados"
-    fi
-  fi
-
-  pause
-}
-
-
-
-### VERIFICACIÓN FINAL ###
-step_verify_installation() {
-  header
-  section "VERIFICACIÓN FINAL DE LA INSTALACIÓN"
-  
-  local errors=0
-  
-  info "Verificando componentes críticos..."
-  echo
-  
-  # Verificar fstab
-  if grep -q "/boot" /mnt/etc/fstab; then
-    success "/boot está en fstab"
-  else
-    echo "✗ ERROR: /boot NO está en fstab"
-    errors=$((errors + 1))
-  fi
-  
-  # Verificar GRUB
-  if [[ -f /mnt/boot/grub/grub.cfg ]]; then
-    success "grub.cfg existe"
-  else
-    echo "✗ ERROR: grub.cfg NO existe"
-    errors=$((errors + 1))
-  fi
-  
-  if [[ -d /mnt/boot/EFI/Arch ]]; then
-    success "Bootloader UEFI instalado en /boot/EFI/Arch"
-  else
-    echo "✗ ERROR: Bootloader NO está en /boot/EFI/"
-    errors=$((errors + 1))
-  fi
-  
-  # Verificar kernel
-  if ls /mnt/boot/vmlinuz-* &>/dev/null; then
-    success "Kernel instalado en /boot"
-  else
-    echo "✗ ERROR: Kernel NO está en /boot"
-    errors=$((errors + 1))
-  fi
-  
-  # Verificar initramfs
-  if ls /mnt/boot/initramfs-* &>/dev/null; then
-    success "initramfs instalado en /boot"
-  else
-    echo "✗ ERROR: initramfs NO está en /boot"
-    errors=$((errors + 1))
-  fi
-  
-  echo
-  if [[ $errors -gt 0 ]]; then
-    echo "⚠ SE DETECTARON $errors ERROR(ES) CRÍTICO(S)"
-    echo "  La instalación puede no arrancar correctamente."
-    echo "  Revisa los errores antes de reiniciar."
-    pause
-  else
-    success "Todas las verificaciones pasaron correctamente"
-  fi
-  
-  pause
-}
-
-### PASO FINAL ###
-step_finalize() {
-  header
-  section "¡INSTALACIÓN COMPLETADA!"
-
-  success "Arch Linux ha sido instalado exitosamente"
-  echo
-  echo "Configuración:"
-  echo "  • Hostname: $HOSTNAME"
-  echo "  • Usuario: $USERNAME"
-  echo "  • Timezone: $TIMEZONE"
-  echo "  • Locale: $LOCALE"
-  echo "  • Bootloader: GRUB (UEFI) con os-prober habilitado"
-  echo "  • Red: NetworkManager"
-  echo
-  echo "Próximos pasos:"
-  echo "  1. Sal del instalador: exit"
-  echo "  2. Desmonta las particiones: umount -R /mnt"
-  echo "  3. Desactiva swap (si usaste): swapoff -a"
-  echo "  4. Reinicia: reboot"
-  echo "  5. Retira el USB/ISO y arranca desde el disco"
-  echo
-  info "Después del primer arranque, inicia sesión con tu usuario y configura"
-  info "lo que necesites (escritorio, aplicaciones, etc.)"
-  echo
-  
-  if confirm "¿Desmontar /mnt y reiniciar ahora?"; then
-    info "Desmontando..."
-    umount -R /mnt || true
-    swapoff -a 2>/dev/null || true
-    info "Reiniciando en 5 segundos..."
-    sleep 5
-    reboot
-  else
-    info "No olvides desmontar y reiniciar manualmente cuando termines"
-  fi
-}
-
-### MAIN ###
-main() {
-  header
-  info "Iniciando instalador de Arch Linux..."
-  echo
-  
-  check_root
-  check_uefi
-  check_commands
-  
-  info "Sincronizando reloj del sistema..."
-  timedatectl
-  success "Reloj sincronizado"
-  
-  pause
-
-  step_prepare_disks
-  step_install_base
-  step_configure_system
-  step_create_users
-  step_install_bootloader
-  step_configure_network
-  step_install_amd_drivers
-  step_install_desktop
-  step_verify_installation
-  step_finalize
-}
-
-main "$@"

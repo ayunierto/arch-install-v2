@@ -7,8 +7,6 @@ IFS=$'\n\t'
 # Ejecutar como root en el live-ISO de Arch Linux
 # ============================================================================
 
-# Configurar fuente de consola para mejor legibilidad
-setfont ter-132b
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -17,8 +15,8 @@ ROOT_PART=""
 EFI_PART=""
 HOME_PART=""
 SWAP_PART=""
-HOSTNAME=""
-USERNAME=""
+HOSTNAME="arch"
+USERNAME="neo"
 TIMEZONE="America/Lima"
 LOCALE="en_US.UTF-8"
 

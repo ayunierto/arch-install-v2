@@ -310,6 +310,17 @@ step_prepare_disks() {
 
   mount --mkdir "$EFI_PART" /mnt/boot
   success "EFI montado en /mnt/boot"
+  
+  # Verificar que el montaje fue exitoso
+  if ! mountpoint -q /mnt/boot; then
+    error "CRÍTICO: /mnt/boot no está montado correctamente"
+  fi
+  
+  # Verificar que la partición EFI es accesible
+  if ! touch /mnt/boot/.test 2>/dev/null; then
+    error "CRÍTICO: No se puede escribir en /mnt/boot (permisos o sistema de archivos corrupto)"
+  fi
+  rm -f /mnt/boot/.test
 
   if [[ -n "$HOME_PART" ]]; then
     mount --mkdir "$HOME_PART" /mnt/home
@@ -344,9 +355,23 @@ step_install_base() {
 
   info "Generando /etc/fstab..."
   genfstab -U /mnt >> /mnt/etc/fstab
-  success "fstab generado: "
+  success "fstab generado"
+  echo
+  
+  # Verificar que /boot esté en fstab
+  if ! grep -q "/boot" /mnt/etc/fstab; then
+    error "CRÍTICO: /boot no está en /etc/fstab. La instalación falló."
+  fi
+  
+  # Mostrar fstab generado
+  info "Contenido de /etc/fstab:"
   echo
   cat /mnt/etc/fstab
+  echo
+  
+  # Advertencia importante
+  echo "⚠ IMPORTANTE: Verifica que la línea de /boot tenga el UUID correcto"
+  echo "             Si hay algún problema, edita /mnt/etc/fstab antes de continuar"
   echo
   pause
 }
@@ -456,8 +481,19 @@ step_install_bootloader() {
   success "os-prober habilitado"
 
   info "Instalando GRUB en modo UEFI..."
-  arch-chroot /mnt /bin/bash -c "grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Arch"
+  if ! arch-chroot /mnt /bin/bash -c "grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Arch"; then
+    error "CRÍTICO: La instalación de GRUB falló. Verifica que /boot esté correctamente montado."
+  fi
   success "GRUB instalado"
+  
+  # Verificar que los archivos de GRUB existan
+  if [[ ! -f /mnt/boot/grub/grubenv ]]; then
+    echo "✗ ADVERTENCIA: No se encontraron archivos de GRUB en /mnt/boot/grub/"
+    echo "  Esto puede indicar un problema con la partición EFI."
+    if ! confirm "¿Continuar de todas formas?"; then
+      error "Instalación cancelada. Verifica la partición EFI."
+    fi
+  fi
 
   info "Detectando otros sistemas operativos..."
   arch-chroot /mnt /bin/bash -c "os-prober" || true
@@ -465,6 +501,19 @@ step_install_bootloader() {
   info "Generando configuración de GRUB..."
   arch-chroot /mnt /bin/bash -c "grub-mkconfig -o /boot/grub/grub.cfg"
   success "Configuración de GRUB generada"
+  
+  # Verificar que grub.cfg se haya generado correctamente
+  if [[ ! -s /mnt/boot/grub/grub.cfg ]]; then
+    error "CRÍTICO: El archivo grub.cfg está vacío o no existe."
+  fi
+  
+  info "Verificando entradas de arranque..."
+  if grep -q "menuentry" /mnt/boot/grub/grub.cfg; then
+    success "Configuración de GRUB válida (entradas de menú encontradas)"
+  else
+    echo "✗ ADVERTENCIA: No se encontraron entradas de menú en grub.cfg"
+    pause
+  fi
   
   pause
 }
@@ -648,6 +697,68 @@ EOF"
 
 
 
+### VERIFICACIÓN FINAL ###
+step_verify_installation() {
+  header
+  section "VERIFICACIÓN FINAL DE LA INSTALACIÓN"
+  
+  local errors=0
+  
+  info "Verificando componentes críticos..."
+  echo
+  
+  # Verificar fstab
+  if grep -q "/boot" /mnt/etc/fstab; then
+    success "/boot está en fstab"
+  else
+    echo "✗ ERROR: /boot NO está en fstab"
+    errors=$((errors + 1))
+  fi
+  
+  # Verificar GRUB
+  if [[ -f /mnt/boot/grub/grub.cfg ]]; then
+    success "grub.cfg existe"
+  else
+    echo "✗ ERROR: grub.cfg NO existe"
+    errors=$((errors + 1))
+  fi
+  
+  if [[ -d /mnt/boot/EFI/Arch ]]; then
+    success "Bootloader UEFI instalado en /boot/EFI/Arch"
+  else
+    echo "✗ ERROR: Bootloader NO está en /boot/EFI/"
+    errors=$((errors + 1))
+  fi
+  
+  # Verificar kernel
+  if ls /mnt/boot/vmlinuz-* &>/dev/null; then
+    success "Kernel instalado en /boot"
+  else
+    echo "✗ ERROR: Kernel NO está en /boot"
+    errors=$((errors + 1))
+  fi
+  
+  # Verificar initramfs
+  if ls /mnt/boot/initramfs-* &>/dev/null; then
+    success "initramfs instalado en /boot"
+  else
+    echo "✗ ERROR: initramfs NO está en /boot"
+    errors=$((errors + 1))
+  fi
+  
+  echo
+  if [[ $errors -gt 0 ]]; then
+    echo "⚠ SE DETECTARON $errors ERROR(ES) CRÍTICO(S)"
+    echo "  La instalación puede no arrancar correctamente."
+    echo "  Revisa los errores antes de reiniciar."
+    pause
+  else
+    success "Todas las verificaciones pasaron correctamente"
+  fi
+  
+  pause
+}
+
 ### PASO FINAL ###
 step_finalize() {
   header
@@ -710,6 +821,7 @@ main() {
   step_configure_network
   step_install_amd_drivers
   step_install_desktop
+  step_verify_installation
   step_finalize
 }
 

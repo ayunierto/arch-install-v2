@@ -15,6 +15,7 @@
     "linux",
     "localdomain",
     "localtime",
+    "menuentry",
     "mkconfig",
     "mountpoint",
     "movewindow",

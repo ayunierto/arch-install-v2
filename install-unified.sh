@@ -11,8 +11,6 @@ IFS=$'\n\t'
 # Este script realiza TODA la instalación: particionado, formateo, instalación
 # base, configuración del sistema, bootloader GRUB con os-prober, usuarios y red.
 
-# Configurar fuente de consola para mejor legibilidad
-setfont ter-132b
 
 ### VARIABLES GLOBALES ###
 ROOT_PART=""

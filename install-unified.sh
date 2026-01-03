@@ -2,12 +2,17 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+
+
 # ============================================================================
 # Instalación completa de Arch Linux (UEFI) - Todo en un solo script
 # ============================================================================
 # Ejecutar como root en el live-ISO de Arch Linux
 # Este script realiza TODA la instalación: particionado, formateo, instalación
 # base, configuración del sistema, bootloader GRUB con os-prober, usuarios y red.
+
+# Configurar fuente de consola para mejor legibilidad
+setfont ter-132b
 
 ### VARIABLES GLOBALES ###
 ROOT_PART=""
@@ -25,6 +30,7 @@ pause() {
   read -rp "Presiona ENTER para continuar..." 
 }
 
+### Pregunta de confirmación (sí/no)
 confirm() {
   local prompt="${1:-¿Continuar?}"
   local ans
@@ -32,6 +38,7 @@ confirm() {
   [[ "$ans" == "y" || "$ans" == "Y" ]]
 }
 
+### Encabezado del script
 header() {
   clear
   echo "╔════════════════════════════════════════════════════════════════╗"
@@ -40,6 +47,7 @@ header() {
   echo
 }
 
+### Sección del script
 section() {
   echo
   echo "┌────────────────────────────────────────────────────────────────┐"
@@ -48,15 +56,18 @@ section() {
   echo
 }
 
+### Mensajes informativos
 info() {
   echo "→ $1"
 }
 
+### Mensajes de error y salida
 error() {
   echo "✗ ERROR: $1" >&2
   exit 1
 }
 
+### Mensajes de éxito
 success() {
   echo "✓ $1"
 }
@@ -66,6 +77,7 @@ check_root() {
   [[ $EUID -eq 0 ]] || error "Este script debe ejecutarse como root"
 }
 
+### Verificar modo UEFI
 check_uefi() {
   [[ -d /sys/firmware/efi ]] || error "Sistema UEFI no detectado. Arranca el ISO en modo UEFI"
 }
@@ -210,8 +222,8 @@ step_prepare_disks() {
     lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
     echo
     echo "┌────────────────────────────────────────────────────────────────┐"
-    echo "│  [1] Abrir cfdisk para crear/modificar particiones            │"
-    echo "│  [2] Continuar a selección de particiones                     │"
+    echo "│  [1] Abrir cfdisk para crear/modificar particiones             │"
+    echo "│  [2] Continuar a selección de particiones                      │"
     echo "│  [q] Salir                                                     │"
     echo "└────────────────────────────────────────────────────────────────┘"
     echo
@@ -253,9 +265,27 @@ step_prepare_disks() {
 
   # Formatear
   section "Formateando particiones"
-  info "Formateando EFI ($EFI_PART) como FAT32..."
-  mkfs.fat -F32 "$EFI_PART"
-  success "EFI formateado"
+  
+  # Preguntar si formatear EFI (en dual boot normalmente NO se formatea)
+  echo "IMPORTANTE: Si estás haciendo dual boot (por ejemplo con Windows),"
+  echo "la partición EFI ya existe y contiene archivos del otro sistema."
+  echo "¡Formatearla ELIMINARÁ el bootloader del otro sistema operativo!"
+  echo
+  if confirm "¿Formatear partición EFI ($EFI_PART) como FAT32?"; then
+    info "Formateando EFI ($EFI_PART) como FAT32..."
+    mkfs.fat -F32 "$EFI_PART"
+    success "EFI formateado"
+  else
+    info "Partición EFI NO será formateada (se usará la existente)"
+    # Verificar que la partición tenga un sistema de archivos válido
+    if ! blkid "$EFI_PART" | grep -q "TYPE=\"vfat\""; then
+      echo "✗ ADVERTENCIA: La partición EFI no parece tener formato FAT32"
+      echo "  Esto puede causar problemas al instalar GRUB"
+      if ! confirm "¿Continuar de todas formas?"; then
+        error "Cancelado por el usuario"
+      fi
+    fi
+  fi
 
   info "Formateando ROOT ($ROOT_PART) como ext4..."
   mkfs.ext4 -F "$ROOT_PART"
@@ -273,18 +303,16 @@ step_prepare_disks() {
     success "SWAP creado"
   fi
 
-  # Montar
+  # 1.11 Montar
   section "Montando particiones en /mnt"
   mount "$ROOT_PART" /mnt
   success "ROOT montado en /mnt"
 
-  mkdir -p /mnt/boot
-  mount "$EFI_PART" /mnt/boot
+  mount --mkdir "$EFI_PART" /mnt/boot
   success "EFI montado en /mnt/boot"
 
   if [[ -n "$HOME_PART" ]]; then
-    mkdir -p /mnt/home
-    mount "$HOME_PART" /mnt/home
+    mount --mkdir "$HOME_PART" /mnt/home
     success "HOME montado en /mnt/home"
   fi
 
@@ -305,19 +333,21 @@ step_install_base() {
   
   info "Instalando paquetes base (esto puede tardar varios minutos)..."
   echo "  - base, linux, linux-firmware"
-  echo "  - base-devel, sudo, neovim, nano"
+  echo "  - base-devel, sudo, neovim"
   echo "  - networkmanager, wpa_supplicant"
   echo "  - grub, efibootmgr, os-prober, ntfs-3g"
   echo
 
-  pacstrap -K /mnt base linux linux-firmware base-devel sudo neovim nano \
+  pacstrap -K /mnt base linux linux-firmware base-devel sudo neovim \
     networkmanager wpa_supplicant grub efibootmgr os-prober ntfs-3g 
   success "Sistema base instalado"
 
   info "Generando /etc/fstab..."
   genfstab -U /mnt >> /mnt/etc/fstab
-  success "fstab generado"
-  
+  success "fstab generado: "
+  echo
+  cat /mnt/etc/fstab
+  echo
   pause
 }
 
@@ -347,20 +377,20 @@ step_configure_system() {
   arch-chroot /mnt /bin/bash -c "hwclock --systohc"
   success "Zona horaria configurada"
 
-  # Locale
+  # Localización (locale)
   echo
   echo "Locales sugeridos:"
-  echo "  [1] es_PE.UTF-8"
-  echo "  [2] es_ES.UTF-8"
-  echo "  [3] es_MX.UTF-8"
-  echo "  [4] en_US.UTF-8"
+  echo "  [1] en_US.UTF-8"
+  echo "  [2] es_PE.UTF-8"
+  echo "  [3] es_ES.UTF-8"
+  echo "  [4] es_MX.UTF-8"
   echo "  [5] Personalizar"
   read -rp "→ Elige locale [1]: " locale_opt
   case "${locale_opt:-1}" in
-    1|"") LOCALE="es_PE.UTF-8" ;;
-    2) LOCALE="es_ES.UTF-8" ;;
-    3) LOCALE="es_MX.UTF-8" ;;
-    4) LOCALE="en_US.UTF-8" ;;
+    1|"") LOCALE="en_US.UTF-8" ;;
+    2) LOCALE="es_PE.UTF-8" ;;
+    3) LOCALE="es_ES.UTF-8" ;;
+    4) LOCALE="es_MX.UTF-8" ;;
     5) read -rp "Introduce locale (ej: es_AR.UTF-8): " LOCALE ;;
   esac
 
@@ -370,16 +400,18 @@ step_configure_system() {
   arch-chroot /mnt /bin/bash -c "echo 'LANG=$LOCALE' > /etc/locale.conf"
   success "Locale configurado"
 
+  # Network configuration
   # Hostname
   echo
   read -rp "→ Nombre para la PC (hostname) [arch]: " HOSTNAME
   HOSTNAME="${HOSTNAME:-arch}"
   info "Configurando hostname: $HOSTNAME"
   arch-chroot /mnt /bin/bash -c "echo '$HOSTNAME' > /etc/hostname"
+
   arch-chroot /mnt /bin/bash -c "cat > /etc/hosts <<EOF
 127.0.0.1   localhost
 ::1         localhost
-127.0.1.1   $HOSTNAME.localdomain $HOSTNAME
+127.0.0.1   $HOSTNAME.localdomain $HOSTNAME
 EOF"
   success "Hostname configurado"
   
@@ -424,7 +456,7 @@ step_install_bootloader() {
   success "os-prober habilitado"
 
   info "Instalando GRUB en modo UEFI..."
-  arch-chroot /mnt /bin/bash -c "grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB"
+  arch-chroot /mnt /bin/bash -c "grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Arch"
   success "GRUB instalado"
 
   info "Detectando otros sistemas operativos..."
@@ -449,10 +481,86 @@ step_configure_network() {
   pause
 }
 
-### PASO 7: ENTORNO DE ESCRITORIO (OPCIONAL) ###
+### PASO 7: DRIVERS AMD (OPCIONAL) ###
+step_install_amd_drivers() {
+  header
+  section "PASO 7: Drivers AMD (opcional)"
+
+  echo "¿Tu sistema tiene hardware AMD (CPU o GPU)?"
+  echo
+  echo "  [1] GPU AMD (instalar drivers de gráficos)"
+  echo "  [2] CPU AMD (instalar microcode)"
+  echo "  [3] Ambos (GPU + CPU AMD)"
+  echo "  [0] Omitir (no tengo hardware AMD)"
+  read -rp "→ Opción [0]: " amd_opt
+
+  case "${amd_opt:-0}" in
+    1)
+      info "Instalando drivers de GPU AMD (GPUs modernas: RX 400+, Vega, Navi, RDNA)..."
+      echo "  • mesa (OpenGL/EGL)"
+      echo "  • vulkan-radeon (Vulkan)"
+      echo "  • libva-mesa-driver (aceleración de video VA-API)"
+      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm mesa vulkan-radeon libva-mesa-driver"
+      success "Drivers de GPU AMD instalados"
+      
+      if confirm "¿Instalar soporte de 32-bit para juegos?"; then
+        info "Habilitando repositorio multilib..."
+        arch-chroot /mnt /bin/bash -c "sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf"
+        arch-chroot /mnt /bin/bash -c "pacman -Sy --noconfirm"
+        
+        info "Instalando drivers de 32-bit..."
+        arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm lib32-mesa lib32-vulkan-radeon"
+        success "Soporte de 32-bit instalado"
+      fi
+      ;;
+    2)
+      info "Instalando microcode para CPU AMD..."
+      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm amd-ucode"
+      success "Microcode AMD instalado"
+      
+      info "Regenerando configuración de GRUB..."
+      arch-chroot /mnt /bin/bash -c "grub-mkconfig -o /boot/grub/grub.cfg"
+      success "GRUB actualizado con microcode AMD"
+      ;;
+    3)
+      info "Instalando drivers de GPU AMD (GPUs modernas: RX 400+, Vega, Navi, RDNA)..."
+      echo "  • mesa (OpenGL/EGL)"
+      echo "  • vulkan-radeon (Vulkan)"
+      echo "  • libva-mesa-driver (aceleración de video VA-API)"
+      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm mesa vulkan-radeon libva-mesa-driver"
+      success "Drivers de GPU AMD instalados"
+      
+      if confirm "¿Instalar soporte de 32-bit para juegos?"; then
+        info "Habilitando repositorio multilib..."
+        arch-chroot /mnt /bin/bash -c "sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf"
+        arch-chroot /mnt /bin/bash -c "pacman -Sy --noconfirm"
+        
+        info "Instalando drivers de 32-bit..."
+        arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm lib32-mesa lib32-vulkan-radeon"
+        success "Soporte de 32-bit instalado"
+      fi
+      
+      echo
+      info "Instalando microcode para CPU AMD..."
+      arch-chroot /mnt /bin/bash -c "pacman -S --noconfirm amd-ucode"
+      success "Microcode AMD instalado"
+      
+      info "Regenerando configuración de GRUB..."
+      arch-chroot /mnt /bin/bash -c "grub-mkconfig -o /boot/grub/grub.cfg"
+      success "GRUB actualizado con microcode AMD"
+      ;;
+    *)
+      info "Omitiendo instalación de drivers AMD"
+      ;;
+  esac
+
+  pause
+}
+
+### PASO 8: ENTORNO DE ESCRITORIO (OPCIONAL) ###
 step_install_desktop() {
   header
-  section "PASO 7: Entorno de escritorio (opcional)"
+  section "PASO 8: Entorno de escritorio (opcional)"
 
   echo "¿Deseas instalar un entorno de escritorio?"
   echo "  [1] Hyprland + greetd (Wayland, moderno y fluido)"
@@ -589,7 +697,7 @@ main() {
   check_commands
   
   info "Sincronizando reloj del sistema..."
-  timedatectl set-ntp true
+  timedatectl
   success "Reloj sincronizado"
   
   pause
@@ -600,6 +708,7 @@ main() {
   step_create_users
   step_install_bootloader
   step_configure_network
+  step_install_amd_drivers
   step_install_desktop
   step_finalize
 }
